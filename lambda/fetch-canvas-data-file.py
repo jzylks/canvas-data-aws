@@ -1,6 +1,8 @@
 import json
 import logging
-from io import BytesIO
+import io
+import csv
+import gzip
 from pprint import pprint
 
 import boto3
@@ -30,12 +32,29 @@ def lambda_handler(event, context):
             'message': 'key {} already exists - skipping'.format(key)
         })
 
-    with open('s3://{}/{}'.format(s3_bucket, key), 'wb', ignore_ext=True) as fout:
+    with open('s3://{}/{}.csv.gz'.format(s3_bucket, key), 'wb', ignore_ext=True) as fout:
+        gzipout = gzip.GzipFile(fileobj=fout, mode='wb')
+        csvout = csv.writer(io.TextIOWrapper(gzipout, write_through=True)) 
         with requests.get(file_url, stream=True) as r:
             r.raise_for_status()
-            for chunk in r.iter_content(chunk_size=chunk_size):
-                if chunk: # filter out keep-alive new chunks
-                    fout.write(chunk)
+            gzipin = gzip.GzipFile(fileobj=r.raw, mode='rb')
+            buffer = io.BytesIO()
+            for chunk in iter(partial(gzipin.read, chunk_size), b''):
+                buffer.write(chunk)
+                buffer.seek(0)
+                with io.TextIOWrapper(buffer) as text_buffer:
+                    with io.StringIO() as csvin:
+                        for line in text_buffer:
+                            if line.endswith('\n'):
+                                csvin.write(line)
+                        csvin.seek(0)
+                        for row in csv.reader(csvin, delimiter='\t'):
+                            csvout.writerow(row)
+                buffer = io.BytesIO()
+                if not line.endswith('\n'):
+                    buffer.write(line.encode())
+
+            gzipout.close()
 
     return {
         'statusCode': 200,
