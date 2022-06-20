@@ -3,6 +3,7 @@ import logging
 import io
 import csv
 import gzip
+from functools import partial
 from pprint import pprint
 
 import boto3
